@@ -25,6 +25,7 @@ fauxmoESP fauxmo;
 int VALVE_ONE_OPEN_TIME = 0;
 int VALVE_TWO_OPEN_TIME = 0;
 unsigned long lastPour = 0;
+int count = 0;
 
 void weakDrink(){
     digitalWrite(LED_1, HIGH);
@@ -119,11 +120,13 @@ void setup() {
             strongDrink();
           }
           pour();
+          //fauxmo.setState(ID_DRINK_BOT, false, 1);
         }
     });
 }
 
 void loop() {
+  Serial.print("Time at beggining of loop: "+ millis());
   setStrength();
   unsigned long timeSinceLastPour = millis() - lastPour;
   if (timeSinceLastPour >= VALVE_ONE_OPEN_TIME){
@@ -137,5 +140,5 @@ void loop() {
       pour();
   }
   fauxmo.handle();
-
+  Serial.print("Time at end of loop: "+ millis());
 }
