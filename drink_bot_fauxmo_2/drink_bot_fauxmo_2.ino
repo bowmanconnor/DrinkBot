@@ -2,16 +2,15 @@
 #include <ESP8266WiFi.h>
 #include "fauxmoESP.h"
 
-
 fauxmoESP fauxmo;
 
 // -----------------------------------------------------------------------------
 
 #define SERIAL_BAUDRATE     115200
-//D0-D2
-#define LED_1                    16
-#define LED_2                    5
-#define LED_3                    4
+//D1-D3
+#define LED_1                    5
+#define LED_2                    4
+#define LED_3                    0
 //D5-D8
 #define B_1                      14
 #define B_2                      12
@@ -29,13 +28,11 @@ int VALVE_ONE_OPEN_TIME = 0;
 int VALVE_TWO_OPEN_TIME = 0;
 unsigned long lastPour = 0;
 
-
 ICACHE_RAM_ATTR void weakDrink() {
   //Set LEDs, change times
   digitalWrite(LED_1, HIGH);
   digitalWrite(LED_2, LOW);
   digitalWrite(LED_3, LOW);
-
   VALVE_ONE_OPEN_TIME = 2 * 1000;
   VALVE_TWO_OPEN_TIME = 3 * 1000;
 }
@@ -45,7 +42,6 @@ ICACHE_RAM_ATTR void normalDrink() {
   digitalWrite(LED_1, LOW);
   digitalWrite(LED_2, HIGH);
   digitalWrite(LED_3, LOW);
-
   VALVE_ONE_OPEN_TIME = 3 * 1000;
   VALVE_TWO_OPEN_TIME = 3 * 1000;
 }
@@ -55,29 +51,16 @@ ICACHE_RAM_ATTR void strongDrink() {
   digitalWrite(LED_1, LOW);
   digitalWrite(LED_2, LOW);
   digitalWrite(LED_3, HIGH);
-
   VALVE_ONE_OPEN_TIME = 4 * 1000;
   VALVE_TWO_OPEN_TIME = 3 * 1000;
 }
 
-//void setStrength() {
-//  if (digitalRead(B_1) == LOW) {
-//    weakDrink();
-//  }
-//  else if (digitalRead(B_2) == LOW) {
-//    normalDrink();
-//  }
-//  else if (digitalRead(B_3) == LOW) {
-//    strongDrink();
-//  }
-//}
-void pour() {
+ICACHE_RAM_ATTR void pour() {
   //Open both valves and update last pour variable
   digitalWrite(VALVE_ONE, HIGH);
   digitalWrite(VALVE_TWO, HIGH);
   lastPour = millis();
 }
-
 
 void wifiSetup() {
   WiFi.mode(WIFI_STA);
@@ -145,7 +128,6 @@ void setup() {
 }
 
 void loop() {
-  // setStrength();
   //Wait for appropiate amount of time to pass to close valves 
   if ((millis()-lastPour) >= VALVE_ONE_OPEN_TIME) {
     digitalWrite(VALVE_ONE, LOW);
@@ -153,10 +135,5 @@ void loop() {
   if ((millis()-lastPour) >= VALVE_TWO_OPEN_TIME) {
     digitalWrite(VALVE_TWO, LOW); 
   }
-//  if (digitalRead(BUTTON) == LOW) {
-//    pour();
-    
-//  }
   fauxmo.handle();
-  
 }
