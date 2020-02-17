@@ -1,10 +1,8 @@
 #include <Arduino.h>
+#include <NTPClient.h>
 #include <ESP8266WiFi.h>
+#include <WiFiUdp.h>
 #include "fauxmoESP.h"
-
-fauxmoESP fauxmo;
-
-// -----------------------------------------------------------------------------
 
 #define SERIAL_BAUDRATE     115200
 //D1-D3
@@ -27,6 +25,13 @@ fauxmoESP fauxmo;
 int VALVE_ONE_OPEN_TIME = 0;
 int VALVE_TWO_OPEN_TIME = 0;
 unsigned long lastPour = 0;
+const long utcOffsetInSeconds = -18000;
+
+fauxmoESP fauxmo;
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
+
+// -----------------------------------------------------------------------------
 
 ICACHE_RAM_ATTR void weakDrink() {
   //Set LEDs, change times
@@ -100,8 +105,11 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(B_3), strongDrink, FALLING);
   attachInterrupt(digitalPinToInterrupt(BUTTON), pour, FALLING);  
 
- //Set up WiFi
+  //Set up WiFi
   wifiSetup();
+  
+  //Connect to time server
+  timeClient.begin();
 
   //Start fauxmo and set up three smart devices
   fauxmo.enable(true);
@@ -128,12 +136,19 @@ void setup() {
 }
 
 void loop() {
+  //Get current time
+  timeClient.update();
+  
   //Wait for appropiate amount of time to pass to close valves 
-  if ((millis()-lastPour) >= VALVE_ONE_OPEN_TIME) {
+  if ((unsigned long)(millis()-lastPour) >= VALVE_ONE_OPEN_TIME) {
     digitalWrite(VALVE_ONE, LOW);
   }
-  if ((millis()-lastPour) >= VALVE_TWO_OPEN_TIME) {
+  if ((unsigned long)(millis()-lastPour) >= VALVE_TWO_OPEN_TIME) {
     digitalWrite(VALVE_TWO, LOW); 
   }
-  fauxmo.handle();
+  //Must be at least 6 am to listen for Alexa input
+  if (timeClient.getHours() > 6){
+    Serial.println(timeClient.getHours());
+    fauxmo.handle();
+  }
 }
