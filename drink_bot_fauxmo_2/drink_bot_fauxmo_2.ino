@@ -8,26 +8,30 @@ fauxmoESP fauxmo;
 // -----------------------------------------------------------------------------
 
 #define SERIAL_BAUDRATE     115200
-
-#define LED_1                    0
-#define LED_2                    0
-#define LED_3                    D2
-#define B_1                      D5
-#define B_2                      D6
-#define B_3                      D7
-#define BUTTON                   2
-#define VALVE_ONE                D0
-#define VALVE_TWO                D1
+//D0-D2
+#define LED_1                    16
+#define LED_2                    5
+#define LED_3                    4
+//D5-D8
+#define B_1                      14
+#define B_2                      12
+#define B_3                      13
+#define BUTTON                   15
+//SD3-SD2
+#define VALVE_ONE                10
+#define VALVE_TWO                9
 
 #define WIFI_SSID               "Prancing Pony"
 #define WIFI_PASS               "sexykeaton"
 
+//Initialize variables
 int VALVE_ONE_OPEN_TIME = 0;
 int VALVE_TWO_OPEN_TIME = 0;
 unsigned long lastPour = 0;
-int count = 0;
 
-void weakDrink() {
+
+ICACHE_RAM_ATTR void weakDrink() {
+  //Set LEDs, change times
   digitalWrite(LED_1, HIGH);
   digitalWrite(LED_2, LOW);
   digitalWrite(LED_3, LOW);
@@ -36,7 +40,8 @@ void weakDrink() {
   VALVE_TWO_OPEN_TIME = 3 * 1000;
 }
 
-void normalDrink() {
+ICACHE_RAM_ATTR void normalDrink() {
+  //Set LEDs, change times
   digitalWrite(LED_1, LOW);
   digitalWrite(LED_2, HIGH);
   digitalWrite(LED_3, LOW);
@@ -45,7 +50,8 @@ void normalDrink() {
   VALVE_TWO_OPEN_TIME = 3 * 1000;
 }
 
-void strongDrink() {
+ICACHE_RAM_ATTR void strongDrink() {  
+  //Set LEDs, change times
   digitalWrite(LED_1, LOW);
   digitalWrite(LED_2, LOW);
   digitalWrite(LED_3, HIGH);
@@ -54,21 +60,21 @@ void strongDrink() {
   VALVE_TWO_OPEN_TIME = 3 * 1000;
 }
 
-void setStrength() {
-  if (digitalRead(B_1) == LOW) {
-    weakDrink();
-  }
-  else if (digitalRead(B_2) == LOW) {
-    normalDrink();
-  }
-  else if (digitalRead(B_3) == LOW) {
-    strongDrink();
-  }
-}
+//void setStrength() {
+//  if (digitalRead(B_1) == LOW) {
+//    weakDrink();
+//  }
+//  else if (digitalRead(B_2) == LOW) {
+//    normalDrink();
+//  }
+//  else if (digitalRead(B_3) == LOW) {
+//    strongDrink();
+//  }
+//}
 void pour() {
+  //Open both valves and update last pour variable
   digitalWrite(VALVE_ONE, HIGH);
-  digitalWrite(VALVE_ONE, HIGH);
-  
+  digitalWrite(VALVE_TWO, HIGH);
   lastPour = millis();
 }
 
@@ -86,11 +92,12 @@ void wifiSetup() {
 }
 
 void setup() {
+  //Start serial
   Serial.begin(SERIAL_BAUDRATE);
   Serial.println();
   Serial.println();
 
-
+  //Set up pins
   pinMode(LED_1, OUTPUT);
   pinMode(LED_2, OUTPUT);
   pinMode(LED_3, OUTPUT);
@@ -100,47 +107,56 @@ void setup() {
   pinMode(BUTTON, INPUT_PULLUP);
   pinMode(VALVE_ONE, OUTPUT);
   pinMode(VALVE_TWO, OUTPUT);
+
+  //Set drink strength to normal at boot
   normalDrink();
 
+  //Set up esp interrupts
+  attachInterrupt(digitalPinToInterrupt(B_1), weakDrink, FALLING);
+  attachInterrupt(digitalPinToInterrupt(B_2), normalDrink, FALLING);
+  attachInterrupt(digitalPinToInterrupt(B_3), strongDrink, FALLING);
+  attachInterrupt(digitalPinToInterrupt(BUTTON), pour, FALLING);  
 
+ //Set up WiFi
   wifiSetup();
 
+  //Start fauxmo and set up three smart devices
   fauxmo.enable(true);
   fauxmo.addDevice("Normal Drink");
   fauxmo.addDevice("Weak Drink");
   fauxmo.addDevice("Strong Drink");
   fauxmo.onSetState([](unsigned char device_id, const char * device_name, bool state) {
     Serial.printf("[MAIN] Device #%d (%s) state: %s value: %d\n", device_id, device_name, state ? "ON" : "OFF");
-    if (strcmp(device_name, "Normal Drink")==0) {
-       normalDrink();
-    }
-    if (strcmp(device_name, "Weak Drink")==0) {
-       weakDrink();
-    }
-    if (strcmp(device_name, "Strong Drink")==0) {
-       strongDrink();
-    }
-    digitalWrite(VALVE_ONE, HIGH);
-    digitalWrite(VALVE_TWO, HIGH);
-    lastPour = millis();
+    //When Alexa turns ON smart device, adjust settings accordingly
+     if (state){
+      if (strcmp(device_name, "Normal Drink")==0) {
+        normalDrink();
+      }
+      if (strcmp(device_name, "Weak Drink")==0) {
+        weakDrink();
+      }
+      if (strcmp(device_name, "Strong Drink")==0) {
+        strongDrink();
+      }
+      //Always pour drink after adjusting settings
+      pour();
+     }
   });
 }
 
 void loop() {
-  setStrength();
- 
+  // setStrength();
+  //Wait for appropiate amount of time to pass to close valves 
   if ((millis()-lastPour) >= VALVE_ONE_OPEN_TIME) {
     digitalWrite(VALVE_ONE, LOW);
   }
   if ((millis()-lastPour) >= VALVE_TWO_OPEN_TIME) {
     digitalWrite(VALVE_TWO, LOW); 
   }
-  if (digitalRead(BUTTON) == LOW) {
-    digitalWrite(VALVE_ONE, HIGH);
-    digitalWrite(VALVE_TWO, HIGH);
-    lastPour = millis();
+//  if (digitalRead(BUTTON) == LOW) {
+//    pour();
     
-  }
+//  }
   fauxmo.handle();
   
 }
