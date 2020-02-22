@@ -5,10 +5,14 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include "fauxmoESP.h"
+#include <WiFiClient.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
+#include <Update.h>
 
 #define SERIAL_BAUDRATE     115200
 
-#define NUM_LEDS 60 
+#define NUM_LEDS 31
 CRGB leds[NUM_LEDS];
 
 //
@@ -25,7 +29,7 @@ CRGB leds[NUM_LEDS];
 #define VALVE_ONE                16
 #define VALVE_TWO                2
 
-#define WIFI_SSID               "WM-Welcome"
+#define WIFI_SSID               ""
 #define WIFI_PASS               ""
 
 //Initialize variables
@@ -33,15 +37,140 @@ int VALVE_ONE_OPEN_TIME = 0;
 int VALVE_TWO_OPEN_TIME = 0;
 long ONE_SHOT_TIME = 0;
 unsigned long lastPour = 0;
-const long utcOffsetInSeconds = -18000;
+const long utcOffsetInSeconds = -18000; //EST
 bool isPouring = false;
+bool partyMode = false;
 
 fauxmoESP fauxmo;
+WebServer server(80);
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 
 // -----------------------------------------------------------------------------
+const char* loginIndex = 
+ "<form name='loginForm'>"
+    "<table width='20%' bgcolor='A09F9F' align='center'>"
+        "<tr>"
+            "<td colspan=2>"
+                "<center><font size=4><b>ESP32 Login Page</b></font></center>"
+                "<br>"
+            "</td>"
+            "<br>"
+            "<br>"
+        "</tr>"
+        "<td>Username:</td>"
+        "<td><input type='text' size=25 name='userid'><br></td>"
+        "</tr>"
+        "<br>"
+        "<br>"
+        "<tr>"
+            "<td>Password:</td>"
+            "<td><input type='Password' size=25 name='pwd'><br></td>"
+            "<br>"
+            "<br>"
+        "</tr>"
+        "<tr>"
+            "<td><input type='submit' onclick='check(this.form)' value='Login'></td>"
+        "</tr>"
+    "</table>"
+"</form>"
+"<script>"
+    "function check(form)"
+    "{"
+    "if(form.userid.value=='admin' && form.pwd.value=='admin')"
+    "{"
+    "window.open('/serverIndex')"
+    "}"
+    "else"
+    "{"
+    " alert('Error Password or Username')/*displays error message*/"
+    "}"
+    "}"
+"</script>";
 
+const char* serverIndex = 
+"<script src='https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js'></script>"
+"<form method='POST' action='#' enctype='multipart/form-data' id='upload_form'>"
+   "<input type='file' name='update'>"
+        "<input type='submit' value='Update'>"
+    "</form>"
+ "<div id='prg'>progress: 0%</div>"
+ "<script>"
+  "$('form').submit(function(e){"
+  "e.preventDefault();"
+  "var form = $('#upload_form')[0];"
+  "var data = new FormData(form);"
+  " $.ajax({"
+  "url: '/update',"
+  "type: 'POST',"
+  "data: data,"
+  "contentType: false,"
+  "processData:false,"
+  "xhr: function() {"
+  "var xhr = new window.XMLHttpRequest();"
+  "xhr.upload.addEventListener('progress', function(evt) {"
+  "if (evt.lengthComputable) {"
+  "var per = evt.loaded / evt.total;"
+  "$('#prg').html('progress: ' + Math.round(per*100) + '%');"
+  "}"
+  "}, false);"
+  "return xhr;"
+  "},"
+  "success:function(d, s) {"
+  "console.log('success!')" 
+ "},"
+ "error: function (a, b, c) {"
+ "}"
+ "});"
+ "});"
+ "</script>";
+//------------------------------------------------------------------------------
+void OTAServer () {
+  if (!MDNS.begin("esp32")) { //http://esp32.local
+    Serial.println("Error setting up MDNS responder!");
+    while (1) {
+      delay(1000);
+    }
+  }
+  Serial.println("mDNS responder started");
+  /*return index page which is stored in serverIndex */
+  server.on("/", HTTP_GET, []() {
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/html", loginIndex);
+  });
+  server.on("/serverIndex", HTTP_GET, []() {
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/html", serverIndex);
+  });
+  /*handling uploading firmware file */
+  server.on("/update", HTTP_POST, []() {
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
+    ESP.restart();
+  }, []() {
+    HTTPUpload& upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+      Serial.printf("Update: %s\n", upload.filename.c_str());
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { //start with max available size
+        Update.printError(Serial);
+      }
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+      /* flashing firmware to ESP*/
+      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+        Update.printError(Serial);
+      }
+    } else if (upload.status == UPLOAD_FILE_END) {
+      if (Update.end(true)) { //true to set the size to the current progress
+        Serial.printf("Update Success: %u\nRebooting...\n", upload.totalSize);
+      } else {
+        Update.printError(Serial);
+      }
+    }
+  });
+  server.begin();
+}
+
+//------------------------------------------------------------------------------
 //ICACHE_RAM_ATTR needed before a function to run in with an interruption
 ICACHE_RAM_ATTR void weakDrink() {
   Serial.println("WEAK");
@@ -102,6 +231,7 @@ void twoShots() {
   VALVE_ONE_OPEN_TIME = 2*ONE_SHOT_TIME * 1000;
   VALVE_TWO_OPEN_TIME = 0 * 1000;
 }
+
 ICACHE_RAM_ATTR void pour() {
   Serial.println("POUR");
   //Open both valves and update last pour variable
@@ -110,7 +240,7 @@ ICACHE_RAM_ATTR void pour() {
   lastPour = millis();
   isPouring = true;
 }
-
+//-----------------------------------------------------------------------------------------------
 void wifiSetup() {
   WiFi.mode(WIFI_STA);
   Serial.printf("[WIFI] Connecting to %s ", WIFI_SSID);
@@ -122,7 +252,7 @@ void wifiSetup() {
   Serial.println();
   Serial.printf("[WIFI] STATION Mode, SSID: %s, IP address: %s\n", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
 }
-
+ //-----------------------------------------------------------------------------------------------
 void setPixel(int Pixel, byte red, byte green, byte blue) {
    leds[Pixel].r = red;
    leds[Pixel].g = green;
@@ -161,38 +291,46 @@ void meteorRain(byte red, byte green, byte blue, byte meteorSize, byte meteorTra
 }
 
 void FadeInOutInGone(byte red, byte green, byte blue){
-  float r, g, b;
-  for(int k = 0; k < 180; k=k+1) { 
-    r = (k/180.0)*red;
-    g = (k/180.0)*green;
-    b = (k/180.0)*blue;
+  float r, g, b;  
+  for(int k = 0; k < 120; k=k+1) { 
+    r = (k/120.0)*red;
+    g = (k/120.0)*green;
+    b = (k/120.0)*blue;
     setAll(r,g,b);
     showStrip();
   }
-   for(int k = 245; k >= 0; k=k-2) {
-    r = (k/246.0)*red;
-    g = (k/246.0)*green;
-    b = (k/246.0)*blue;
+  delay(20);
+  for(int k = 215; k >= 0; k=k-2) {
+    r = (k/215.0)*red;
+    g = (k/215.0)*green;
+    b = (k/215.0)*blue;
     setAll(r,g,b);
     showStrip();
   }
-  for(int k = 0; k < 180; k=k+1) { 
-    r = (k/180.0)*red;
-    g = (k/180.0)*green;
-    b = (k/180.0)*blue;
+  for(int k = 0; k < 115; k=k+1) { 
+    r = (k/115.0)*red;
+    g = (k/115.0)*green;
+    b = (k/115.0)*blue;
     setAll(r,g,b);
     showStrip();
   }
-    delay(100);
+    delay(65);
     for(uint16_t i=NUM_LEDS; i>0; i--) {
       setPixel(i, 0x00, 0x00, 0x00);
       showStrip();
-      delay(7.5);
+      delay(5.0);
   }
-  setAll(0x00, 0x00, 0x00);
+  setAll(0x00,0x00,0x00);
 }
 
-
+void colorWipe(byte red, byte green, byte blue, int SpeedDelay) {
+  for(uint16_t i=NUM_LEDS; i>0; i--) {
+      setPixel(i, red, green, blue);
+      showStrip();
+      delay(SpeedDelay);
+  }
+}
+//-----------------------------------------------------------------------------------------------
 void setup() {
   //Set up led strip
   FastLED.addLeds<WS2812B, LED_STRIP, GRB>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
@@ -224,6 +362,9 @@ void setup() {
 
   //Set up WiFi
   wifiSetup();
+
+  //Set up OTA Server
+  OTAServer();
   
   //Connect to time server
   timeClient.begin();
@@ -253,23 +394,35 @@ void setup() {
         if (value==231) {
           strongDrink();
         }
-        if (value==){
-          pop();
-        }
-        if (value==){
-          oneShot();
-        }
-        if (value==){
-          twoShots();
-        }
-        //Always pour drink after adjusting settings
-        pour();
+       if (value==33){
+         pop();
+       }
+       if (value==33){
+         oneShot();
+       }
+       if (value==33){
+         twoShots();
+       }
+       //if party mode is deactivated turn off party mode and dont pour
+       if (value ==33){
+         partyMode = false;
+       }
+       //if party mode is activated turn on party mode and dont pour
+       else if (value ==33){
+         partyMode = true;
+       }
+       // if anything but party mode pour after adjsuting settings
+        else {
+          pour();
+       }
        }
      }
   });
 }
 
 void loop() {
+  //Listen for OTA files
+  server.handleClient();
   
   //Get current time
   timeClient.update();
@@ -293,18 +446,19 @@ void loop() {
   if (isPouring){
       //Set the time for this animation to sync up with whichever valve is open longer
       if (VALVE_TWO_OPEN_TIME>VALVE_ONE_OPEN_TIME){
-          meteorRain(0x00,0x00,0xff, 1, 188, true, VALVE_TWO_OPEN_TIME/60);
-      else {
-          meteorRain(0x00,0x00,0xff, 1, 188, true, VALVE_ONE_OPEN_TIME/60);
-        }
+          meteorRain(0xff,0xff,0x00, 1, 188, true, VALVE_TWO_OPEN_TIME/NUM_LEDS);
       }
-  }      
-
+      else {
+          meteorRain(0xff,0xff,0x00, 1, 188, true, VALVE_ONE_OPEN_TIME/NUM_LEDS);
+        }
+    }
+    
+  if (partyMode) {
+     //add animation
+  }
   //Must be at least 6 am to listen for Alexa input
   if (timeClient.getHours() > 6){
     //Serial.println(timeClient.getHours());
     fauxmo.handle();
   }
 }
-    
-       
