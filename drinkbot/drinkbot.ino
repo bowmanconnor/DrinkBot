@@ -390,6 +390,8 @@ void setup()
   }
   delay(1000);
   setAll(0x00, 0x00, 0x00);
+
+  Serial.println("OTA WORKED");
 }
 
 
