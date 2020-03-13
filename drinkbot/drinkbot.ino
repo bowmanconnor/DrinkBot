@@ -371,7 +371,8 @@ void setup()
           pixelIndex = 0;
         }
         if(value == OTA_VALUE){
-
+          disableCore0WDT();
+          disableCore1WDT();
           perform_ota(&wifi_client);
         }
         if (value != OTA_VALUE && value != DRAIN_TWO_VALUE && value != DRAIN_ONE_VALUE) //Pour if the draining system was not turned on
